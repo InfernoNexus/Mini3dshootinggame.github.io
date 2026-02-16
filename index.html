@@ -2,39 +2,61 @@
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>3D Neon Shooter</title>
+    <title>3D Neon Shooter Mobile</title>
     <style>
-        body { margin: 0; background: #111; color: white; font-family: sans-serif; overflow: hidden; text-align: center; }
-        canvas { display: block; margin: auto; background: #000; border: 4px solid #333; }
-        #ui { position: absolute; top: 10px; left: 10px; pointer-events: none; text-shadow: 2px 2px #000; }
+        body { margin: 0; background: #111; color: white; font-family: sans-serif; overflow: hidden; touch-action: none; }
+        canvas { display: block; margin: auto; background: #000; }
+        
+        #ui { position: absolute; top: 10px; left: 10px; pointer-events: none; z-index: 10; }
         .crosshair { 
             position: absolute; top: 50%; left: 50%; 
             width: 20px; height: 20px; border: 2px solid #0f0;
-            transform: translate(-50%, -50%); border-radius: 50%;
+            transform: translate(-50%, -50%); border-radius: 50%; pointer-events: none;
         }
-        #instructions { position: absolute; bottom: 10px; width: 100%; color: #888; }
+
+        /* Mobile Control Overlay */
+        #mobile-controls {
+            position: absolute; bottom: 20px; width: 100%;
+            display: flex; justify-content: space-between; padding: 0 20px; box-sizing: border-box;
+        }
+        .d-pad { display: grid; grid-template-columns: 60px 60px 60px; gap: 5px; }
+        .btn {
+            width: 60px; height: 60px; background: rgba(255,255,255,0.2);
+            border: 2px solid #fff; border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: bold; user-select: none; -webkit-tap-highlight-color: transparent;
+        }
+        .btn:active { background: rgba(255,255,255,0.5); }
+        #fireBtn {
+            width: 80px; height: 80px; background: rgba(255, 0, 0, 0.3);
+            border-color: #ff4444; border-radius: 50%; font-size: 14px;
+        }
     </style>
 </head>
 <body>
 
-    <div id="ui">
-        Score: <span id="score">0</span><br>
-        Health: <span id="health">100</span>
-    </div>
+    <div id="ui">Score: <span id="score">0</span></div>
     <div class="crosshair"></div>
-    <div id="instructions">WASD to Move | SPACE or Click to Shoot</div>
     
     <canvas id="gameCanvas"></canvas>
+
+    <div id="mobile-controls">
+        <div class="d-pad">
+            <div></div><div class="btn" id="up">W</div><div></div>
+            <div class="btn" id="left">A</div><div></div><div class="btn" id="right">D</div>
+            <div></div><div class="btn" id="down">S</div><div></div>
+        </div>
+        <div class="btn" id="fireBtn">FIRE</div>
+    </div>
 
     <script>
         const canvas = document.getElementById("gameCanvas");
         const ctx = canvas.getContext("2d");
         const scoreEl = document.getElementById("score");
 
-        canvas.width = window.innerWidth > 800 ? 800 : window.innerWidth;
-        canvas.height = window.innerHeight > 600 ? 600 : window.innerHeight;
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
 
-        // --- GAME MAP (1 = Wall, 0 = Empty) ---
         const mapSize = 12;
         const map = [
             1,1,1,1,1,1,1,1,1,1,1,1,
@@ -49,18 +71,36 @@
             1,1,1,1,1,1,1,1,1,1,1,1
         ];
 
-        // --- PLAYER & STATE ---
-        let p = { x: 2, y: 2, dir: 0, rot: 0, move: 0, score: 0 };
-        const keys = {};
+        let p = { x: 2, y: 2, dir: 0, score: 0 };
+        const keys = { w:false, s:false, a:false, d:false };
+
+        // --- MOBILE TOUCH LISTENERS ---
+        const bindBtn = (id, key) => {
+            const el = document.getElementById(id);
+            el.addEventListener('touchstart', (e) => { e.preventDefault(); keys[key] = true; });
+            el.addEventListener('touchend', (e) => { e.preventDefault(); keys[key] = false; });
+        };
+
+        bindBtn('up', 'w'); bindBtn('down', 's');
+        bindBtn('left', 'a'); bindBtn('right', 'd');
+        document.getElementById('fireBtn').addEventListener('touchstart', (e) => {
+            e.preventDefault(); shoot();
+        });
+
+        // --- KEYBOARD FALLBACK ---
+        window.onkeydown = e => {
+            if(e.code==='KeyW') keys.w=true; if(e.code==='KeyS') keys.s=true;
+            if(e.code==='KeyA') keys.a=true; if(e.code==='KeyD') keys.d=true;
+            if(e.code==='Space') shoot();
+        };
+        window.onkeyup = e => {
+            if(e.code==='KeyW') keys.w=false; if(e.code==='KeyS') keys.s=false;
+            if(e.code==='KeyA') keys.a=false; if(e.code==='KeyD') keys.d=false;
+        };
+
         const targets = [{x: 5, y: 5, active: true}, {x: 8, y: 2, active: true}, {x: 3, y: 8, active: true}];
 
-        // --- INPUT ---
-        window.onkeydown = e => keys[e.code] = true;
-        window.onkeyup = e => keys[e.code] = false;
-        window.onclick = shoot;
-
         function shoot() {
-            // Check if looking at a target
             targets.forEach(t => {
                 let dx = t.x - p.x;
                 let dy = t.y - p.y;
@@ -68,87 +108,69 @@
                 let diff = angleToTarget - p.dir;
                 while (diff < -Math.PI) diff += Math.PI * 2;
                 while (diff > Math.PI) diff -= Math.PI * 2;
-                
-                if (Math.abs(diff) < 0.1 && t.active) {
+                if (Math.abs(diff) < 0.15 && t.active) {
                     t.active = false;
                     p.score += 10;
                     scoreEl.innerText = p.score;
-                    setTimeout(() => t.active = true, 3000); // Respawn
+                    setTimeout(() => t.active = true, 2000);
                 }
             });
         }
 
         function update() {
-            if (keys['KeyW']) { p.x += Math.cos(p.dir) * 0.05; p.y += Math.sin(p.dir) * 0.05; }
-            if (keys['KeyS']) { p.x -= Math.cos(p.dir) * 0.05; p.y -= Math.sin(p.dir) * 0.05; }
-            if (keys['KeyA']) p.dir -= 0.04;
-            if (keys['KeyD']) p.dir += 0.04;
-            if (keys['Space']) shoot();
+            let nextX = p.x;
+            let nextY = p.y;
+            if (keys.w) { nextX += Math.cos(p.dir) * 0.05; nextY += Math.sin(p.dir) * 0.05; }
+            if (keys.s) { nextX -= Math.cos(p.dir) * 0.05; nextY -= Math.sin(p.dir) * 0.05; }
+            if (keys.a) p.dir -= 0.05;
+            if (keys.d) p.dir += 0.05;
 
-            // Collision basic
-            if (map[Math.floor(p.y) * mapSize + Math.floor(p.x)] == 1) {
-                p.x = 2; p.y = 2; // Reset if hit wall
+            // Simple Wall Collision
+            if (map[Math.floor(nextY) * mapSize + Math.floor(nextX)] === 0) {
+                p.x = nextX; p.y = nextY;
             }
         }
 
         function draw() {
-            // 1. Background (Floor & Ceiling)
-            ctx.fillStyle = "#222"; ctx.fillRect(0, 0, canvas.width, canvas.height/2);
-            ctx.fillStyle = "#444"; ctx.fillRect(0, canvas.height/2, canvas.width, canvas.height/2);
+            ctx.fillStyle = "#111"; ctx.fillRect(0, 0, canvas.width, canvas.height/2);
+            ctx.fillStyle = "#222"; ctx.fillRect(0, canvas.height/2, canvas.width, canvas.height/2);
 
-            // 2. Raycasting Walls
-            const numRays = 100;
+            const numRays = 60; // Lowered for mobile performance
             const fov = Math.PI / 3;
             for (let i = 0; i < numRays; i++) {
                 let rayAngle = (p.dir - fov/2) + (i / numRays) * fov;
                 let distance = 0;
                 let hitWall = false;
-
-                while (!hitWall && distance < 15) {
+                while (!hitWall && distance < 10) {
                     distance += 0.1;
                     let testX = Math.floor(p.x + Math.cos(rayAngle) * distance);
                     let testY = Math.floor(p.y + Math.sin(rayAngle) * distance);
-                    if (map[testY * mapSize + testX] == 1) hitWall = true;
+                    if (map[testY * mapSize + testX] === 1) hitWall = true;
                 }
-
-                // Draw Wall Strip
                 let h = canvas.height / (distance * Math.cos(rayAngle - p.dir));
-                let brightness = 255 - (distance * 15);
-                ctx.fillStyle = `rgb(0, ${brightness}, ${brightness})`;
+                ctx.fillStyle = `rgb(0, ${200 - distance*15}, ${255 - distance*15})`;
                 ctx.fillRect(i * (canvas.width/numRays), (canvas.height - h)/2, (canvas.width/numRays) + 1, h);
             }
 
-            // 3. Draw Targets (Sprites)
             targets.forEach(t => {
                 if (!t.active) return;
-                let dx = t.x - p.x;
-                let dy = t.y - p.y;
+                let dx = t.x - p.x; let dy = t.y - p.y;
                 let dist = Math.sqrt(dx*dx + dy*dy);
                 let angle = Math.atan2(dy, dx) - p.dir;
-                
                 while (angle < -Math.PI) angle += Math.PI * 2;
                 while (angle > Math.PI) angle -= Math.PI * 2;
-
                 if (Math.abs(angle) < fov) {
                     let screenX = (0.5 * (angle / (fov/2)) + 0.5) * canvas.width;
                     let h = canvas.height / dist;
                     ctx.fillStyle = "red";
-                    ctx.beginPath();
-                    ctx.arc(screenX, canvas.height/2, h/4, 0, Math.PI*2);
-                    ctx.fill();
-                    ctx.strokeStyle = "white";
-                    ctx.stroke();
+                    ctx.beginPath(); ctx.arc(screenX, canvas.height/2, h/4, 0, Math.PI*2); ctx.fill();
                 }
             });
 
-            requestAnimationFrame(() => {
-                update();
-                draw();
-            });
+            update();
+            requestAnimationFrame(draw);
         }
-
         draw();
     </script>
 </body>
 </html>
-
