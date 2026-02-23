@@ -5,7 +5,7 @@
     <title>3D Neon Shooter Pro</title>
     <style>
         body { margin: 0; background: #000; color: white; font-family: 'Courier New', Courier, monospace; overflow: hidden; touch-action: none; }
-        canvas { display: block; margin: auto; }
+        canvas { display: block; width: 100vw; height: 100vh; }
         
         #ui { position: absolute; top: 15px; left: 15px; pointer-events: none; z-index: 10; font-size: 20px; text-shadow: 0 0 10px #0f0; }
         .crosshair { 
@@ -14,9 +14,10 @@
             transform: translate(-50%, -50%); border-radius: 50%; pointer-events: none;
         }
 
+        /* Mobile Controls */
         #mobile-controls {
             position: absolute; bottom: 20px; width: 100%;
-            display: flex; justify-content: space-between; padding: 0 20px; box-sizing: border-box;
+            display: flex; justify-content: space-between; padding: 0 20px; box-sizing: border-box; z-index: 20;
         }
         .d-pad { display: grid; grid-template-columns: 65px 65px 65px; gap: 8px; }
         .btn {
@@ -25,17 +26,18 @@
             display: flex; align-items: center; justify-content: center;
             font-weight: bold; color: #0ff; user-select: none;
         }
-        .btn:active { background: rgba(0, 255, 255, 0.4); box-shadow: 0 0 15px #0ff; }
         #fireBtn {
-            width: 90px; height: 90px; background: rgba(255, 0, 0, 0.2);
-            border: 2px solid #f00; border-radius: 50%; color: #f00; font-size: 16px;
+            width: 100px; height: 100px; background: rgba(255, 0, 0, 0.2);
+            border: 2px solid #f00; border-radius: 50%; color: #f00; font-size: 18px;
         }
+        #fsBtn { position: absolute; top: 15px; right: 15px; background: rgba(255,255,255,0.1); border: 1px solid #fff; padding: 5px 10px; color: white; z-index: 30; }
     </style>
 </head>
 <body>
 
     <div id="ui">SCORE: <span id="score">0</span></div>
     <div class="crosshair"></div>
+    <button id="fsBtn">GO FULLSCREEN</button>
     
     <canvas id="gameCanvas"></canvas>
 
@@ -53,8 +55,26 @@
         const ctx = canvas.getContext("2d");
         const scoreEl = document.getElementById("score");
 
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
+        // Set high-res canvas size
+        function resize() {
+            canvas.width = window.innerWidth * window.devicePixelRatio;
+            canvas.height = window.innerHeight * window.devicePixelRatio;
+            ctx.imageSmoothingEnabled = false; // Keeps pixels sharp
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // Assets
+        const gunImg = new Image();
+        gunImg.src = 'gun.png'; 
+        
+        // Creating a procedural texture for the "Beautiful" wall effect
+        const wallTex = document.createElement('canvas');
+        const tCtx = wallTex.getContext('2d');
+        wallTex.width = 64; wallTex.height = 64;
+        tCtx.fillStyle = '#003366'; tCtx.fillRect(0,0,64,64);
+        tCtx.strokeStyle = '#00ffff'; tCtx.lineWidth = 2;
+        tCtx.strokeRect(0,0,64,64); // Neon grid pattern
 
         const mapSize = 12;
         const map = [
@@ -73,20 +93,17 @@
         let p = { x: 2, y: 2, dir: 0, score: 0 };
         const keys = { w:false, s:false, a:false, d:false };
         let recoil = 0;
-        
-        // Raycasting config
-        const numRays = 120; 
+        const numRays = 160; 
         const fov = Math.PI / 3;
-        const zBuffer = new Array(numRays).fill(0);
+        const zBuffer = new Array(numRays);
 
-        // Entity System
         const entities = [
-            {x: 5, y: 5, active: true, color: "#f0f", size: 0.7}, 
-            {x: 8, y: 2, active: true, color: "#0ff", size: 0.5}, 
-            {x: 3, y: 8, active: true, color: "#ff0", size: 0.8}
+            {x: 5, y: 5, active: true, color: "#f0f", size: 0.8}, 
+            {x: 8, y: 2, active: true, color: "#0ff", size: 0.6}, 
+            {x: 3, y: 8, active: true, color: "#ff0", size: 0.7}
         ];
 
-        // Mobile Events
+        // Controls
         const bindBtn = (id, key) => {
             const el = document.getElementById(id);
             el.addEventListener('touchstart', (e) => { e.preventDefault(); keys[key] = true; });
@@ -95,87 +112,45 @@
         bindBtn('up', 'w'); bindBtn('down', 's');
         bindBtn('left', 'a'); bindBtn('right', 'd');
         document.getElementById('fireBtn').addEventListener('touchstart', (e) => { e.preventDefault(); shoot(); });
-
-        window.onkeydown = e => {
-            const k = e.code;
-            if(k==='KeyW') keys.w=true; if(k==='KeyS') keys.s=true;
-            if(k==='KeyA') keys.a=true; if(k==='KeyD') keys.d=true;
-            if(k==='Space') shoot();
-        };
-        window.onkeyup = e => {
-            const k = e.code;
-            if(k==='KeyW') keys.w=false; if(k==='KeyS') keys.s=false;
-            if(k==='KeyA') keys.a=false; if(k==='KeyD') keys.d=false;
-        };
+        document.getElementById('fsBtn').onclick = () => document.documentElement.requestFullscreen();
 
         function shoot() {
-            recoil = 30; // Gun kickback
+            recoil = 40;
             entities.forEach(t => {
-                let dx = t.x - p.x;
-                let dy = t.y - p.y;
-                let dist = Math.sqrt(dx*dx + dy*dy);
-                let angleToTarget = Math.atan2(dy, dx);
-                let diff = angleToTarget - p.dir;
-                while (diff < -Math.PI) diff += Math.PI * 2;
-                while (diff > Math.PI) diff -= Math.PI * 2;
-
-                // Hit detection within crosshair angle and not behind wall
-                if (Math.abs(diff) < 0.15 && t.active) {
-                    t.active = false;
-                    p.score += 100;
-                    scoreEl.innerText = p.score;
+                let dx = t.x - p.x; let dy = t.y - p.y;
+                let angle = Math.atan2(dy, dx) - p.dir;
+                while (angle < -Math.PI) angle += Math.PI * 2;
+                while (angle > Math.PI) angle -= Math.PI * 2;
+                if (Math.abs(angle) < 0.15 && t.active) {
+                    t.active = false; p.score += 100; scoreEl.innerText = p.score;
                     setTimeout(() => t.active = true, 3000);
                 }
             });
         }
 
         function drawGun() {
-            const centerX = canvas.width / 2;
-            const bottom = canvas.height;
-            recoil *= 0.8; // Smooth recoil recovery
-
-            ctx.save();
-            ctx.translate(0, recoil);
-            
-            // Gun Body
-            ctx.fillStyle = "#222";
-            ctx.fillRect(centerX - 40, bottom - 140, 80, 150);
-            // Neon Details
-            ctx.fillStyle = "#0ff";
-            ctx.shadowBlur = 15;
-            ctx.shadowColor = "#0ff";
-            ctx.fillRect(centerX - 5, bottom - 170, 10, 100);
-            ctx.restore();
+            recoil *= 0.85;
+            const w = canvas.height * 0.8; // Scale gun based on screen height
+            const h = w;
+            ctx.drawImage(gunImg, (canvas.width - w)/2, (canvas.height - h) + 20 + recoil, w, h);
         }
 
         function drawEntities() {
-            // Sort by distance (furthest first)
-            entities.sort((a,b) => {
-                let da = Math.hypot(a.x-p.x, a.y-p.y);
-                let db = Math.hypot(b.x-p.x, b.y-p.y);
-                return db - da;
-            });
-
             entities.forEach(ent => {
                 if (!ent.active) return;
-                let dx = ent.x - p.x; 
-                let dy = ent.y - p.y;
-                let dist = Math.sqrt(dx*dx + dy*dy);
+                let dx = ent.x - p.x; let dy = ent.y - p.y;
+                let dist = Math.hypot(dx, dy);
                 let angle = Math.atan2(dy, dx) - p.dir;
-                
                 while (angle < -Math.PI) angle += Math.PI * 2;
                 while (angle > Math.PI) angle -= Math.PI * 2;
 
                 if (Math.abs(angle) < fov) {
                     let screenX = (0.5 * (angle / (fov/2)) + 0.5) * canvas.width;
                     let h = (canvas.height / dist) * ent.size;
-                    
-                    // Z-Buffer check: only draw if ray hit is further than entity
                     let rayIdx = Math.floor((angle + fov/2) / fov * numRays);
                     if (zBuffer[rayIdx] > dist) {
                         ctx.fillStyle = ent.color;
-                        ctx.shadowBlur = 10;
-                        ctx.shadowColor = ent.color;
+                        ctx.shadowBlur = 15; ctx.shadowColor = ent.color;
                         ctx.fillRect(screenX - h/2, (canvas.height - h)/2, h, h);
                         ctx.shadowBlur = 0;
                     }
@@ -183,57 +158,54 @@
             });
         }
 
-        function update() {
-            let nextX = p.x;
-            let nextY = p.y;
-            let moveStep = 0.06;
-            let rotStep = 0.05;
-
-            if (keys.w) { nextX += Math.cos(p.dir) * moveStep; nextY += Math.sin(p.dir) * moveStep; }
-            if (keys.s) { nextX -= Math.cos(p.dir) * moveStep; nextY -= Math.sin(p.dir) * moveStep; }
-            if (keys.a) p.dir -= rotStep;
-            if (keys.d) p.dir += rotStep;
-
-            if (map[Math.floor(nextY) * mapSize + Math.floor(nextX)] === 0) {
-                p.x = nextX; p.y = nextY;
-            }
-        }
-
         function draw() {
             // Background
-            ctx.fillStyle = "#050505"; ctx.fillRect(0, 0, canvas.width, canvas.height/2);
-            ctx.fillStyle = "#111"; ctx.fillRect(0, canvas.height/2, canvas.width, canvas.height/2);
+            ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height/2);
+            let floorGrad = ctx.createLinearGradient(0, canvas.height/2, 0, canvas.height);
+            floorGrad.addColorStop(0, "#111"); floorGrad.addColorStop(1, "#002233");
+            ctx.fillStyle = floorGrad; ctx.fillRect(0, canvas.height/2, canvas.width, canvas.height/2);
 
-            // Walls
+            // Textured Walls
             for (let i = 0; i < numRays; i++) {
                 let rayAngle = (p.dir - fov/2) + (i / numRays) * fov;
                 let distance = 0;
                 let hitWall = false;
+                let testX, testY;
+
                 while (!hitWall && distance < 15) {
-                    distance += 0.05;
-                    let testX = Math.floor(p.x + Math.cos(rayAngle) * distance);
-                    let testY = Math.floor(p.y + Math.sin(rayAngle) * distance);
-                    if (map[testY * mapSize + testX] === 1) hitWall = true;
+                    distance += 0.02;
+                    testX = p.x + Math.cos(rayAngle) * distance;
+                    testY = p.y + Math.sin(rayAngle) * distance;
+                    if (map[Math.floor(testY) * mapSize + Math.floor(testX)] === 1) hitWall = true;
                 }
-                
+
                 zBuffer[i] = distance;
                 let h = canvas.height / (distance * Math.cos(rayAngle - p.dir));
-                let brightness = Math.max(0, 200 - distance * 15);
-                ctx.fillStyle = `rgb(0, ${brightness/2}, ${brightness})`;
+                
+                // Texture Calculation
+                let hitX = testX - Math.floor(testX);
+                let hitY = testY - Math.floor(testY);
+                let texX = Math.floor(((Math.abs(hitY) > 0.001) ? hitY : hitX) * 64);
+
+                ctx.drawImage(wallTex, texX, 0, 1, 64, i * (canvas.width/numRays), (canvas.height - h)/2, (canvas.width/numRays) + 1, h);
+                
+                // Lighting/Fog
+                ctx.fillStyle = `rgba(0,0,0,${Math.min(1, distance/10)})`;
                 ctx.fillRect(i * (canvas.width/numRays), (canvas.height - h)/2, (canvas.width/numRays) + 1, h);
             }
 
             drawEntities();
             drawGun();
-            update();
+            
+            // Movement logic
+            let moveStep = 0.06;
+            if (keys.w) { if(map[Math.floor(p.y + Math.sin(p.dir)*0.2)*mapSize + Math.floor(p.x + Math.cos(p.dir)*0.2)] === 0) { p.x += Math.cos(p.dir) * moveStep; p.y += Math.sin(p.dir) * moveStep; }}
+            if (keys.s) { if(map[Math.floor(p.y - Math.sin(p.dir)*0.2)*mapSize + Math.floor(p.x - Math.cos(p.dir)*0.2)] === 0) { p.x -= Math.cos(p.dir) * moveStep; p.y -= Math.sin(p.dir) * moveStep; }}
+            if (keys.a) p.dir -= 0.05;
+            if (keys.d) p.dir += 0.05;
+
             requestAnimationFrame(draw);
         }
-
-        window.onresize = () => {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-        };
-
         draw();
     </script>
 </body>
